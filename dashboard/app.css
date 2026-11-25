@@ -70,6 +70,14 @@ button { cursor: pointer; }
 .strip p + p { margin-top: 6px; }
 .strip code { font-family: var(--font-num); font-size: 12.5px; color: var(--ink); background: rgba(255, 255, 255, 0.06); padding: 1px 5px; border-radius: 4px; }
 .strip .dropped { color: var(--faint); }
+.checks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.checks span { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px; font-size: 12.5px; color: var(--ink); }
+.checks span:first-child { color: var(--positive); }
+.strip-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 10px 0 4px; }
+.strip-tables table.mini { margin: 0; }
+.strip-tables caption { border-bottom: 0; padding: 0 0 4px; font-size: 12px; }
+.excluded { margin-top: 18px; }
+.farm-sum { color: var(--accent); font-size: 13.5px; margin: 0 0 12px; }
 .controls { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; margin: 20px 0 14px; }
 .field label, .field .sub { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px; }
 .field input, .field select { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; color: var(--ink); min-width: 220px; }

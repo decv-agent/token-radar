@@ -74,55 +74,14 @@
     return { terms: terms, z: r.z, odds: r.odds };
   }
 
-  // The farm plan is the same derivation main.ts writes to board.json: category, chains, TVL and age
-  // decide the action, the capital, the hold and every cost and time. No name is special-cased.
-  function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
-  function capitalFor(p) {
-    if (p.tvl_usd >= 5e9) return 250;
-    if (p.tvl_usd >= 1e9) return 150;
-    if (p.tvl_usd >= 1e8) return 100;
-    return 50;
-  }
-  function holdDaysFor(age) {
-    if (age === null || age === undefined) return 30;
-    if (age < 180) return 60;
-    if (age < 365) return 45;
-    return 30;
-  }
-  function actionFor(p, capital, chain) {
-    var c = (p.category || '').toLowerCase();
-    var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Lend $' + capital + ' of USDC through ' + name + ' on ' + chain + ' and leave the loan open.';
-    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Add $' + capital + ' of liquidity to ' + name + "'s deepest pool on " + chain + ' and leave it there.';
-    if (c.indexOf('bridge') >= 0) return 'Move $' + capital + ' of USDC to ' + chain + ' with ' + name + ', then put the bridged funds to work in its app.';
-    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return "Stake $" + capital + " of the chain's native asset via " + name + ' and hold the receipt token.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Post $' + capital + ' of USDC as collateral on ' + name + ' and open a single small position.';
-    if (c.indexOf('prediction') >= 0) return 'Back one outcome with $' + capital + ' on ' + name + '.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Put $' + capital + ' into a ' + name + ' vault on ' + chain + ' and hold the vault shares.';
-    if (c.indexOf('stable') >= 0) return 'Mint or hold $' + capital + ' of the stable asset issued through ' + name + ' on ' + chain + '.';
-    if (c.indexOf('rwa') >= 0) return 'Mint $' + capital + ' of the yield-bearing asset ' + name + ' issues on ' + chain + ' and hold it.';
-    if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy active.';
-    return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and leave the position open.';
-  }
-  function stepText(step) {
-    var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
-    if (s.length > 600) s = s.slice(0, 596) + '...';
-    if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
-    return s;
-  }
-  function farmSteps(p) {
-    var chain = chainOf(p);
-    var capital = capitalFor(p);
-    var hold = holdDaysFor(p.age_days);
-    return [
-      { text: 'Open a fresh wallet for this farm only, fund it with the farming capital, and store its recovery phrase offline.', cost: 'under $3 of gas for the first transfer', time: '5 minutes' },
-      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital plus about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
-      { text: 'Do one real action every week on the protocol: a deposit, a borrow, a swap, or a vote.', cost: 'about $2 of gas per week', time: '10 minutes a week' },
-      { text: 'Keep the position open for at least ' + hold + ' days, so the activity spans more than one snapshot.', cost: 'the $' + capital + ' stays locked in the position', time: hold + ' days' },
-      { text: "When a rewards page exists, open it only from the protocol's own site and never pay anyone to claim for you.", cost: 'free to check; never pay to claim', time: '10 minutes' },
-      { text: 'Keep a farm log: the wallet, the dates, and every transaction hash, so the position can be repeated or unwound.', cost: 'nothing but the log', time: '5 minutes' }
-    ].map(stepText);
-  }
+  // The farm plan rides with the row: main.ts derives it from the protocol's own record (category,
+  // chains, TVL, age, odds) — the family decides what the position is and what the week looks like,
+  // the figures decide the capital, the hold, the risk note and the exit trigger. The page renders
+  // the board's own steps, so the plan on screen and the plan in board.json are the same strings.
+  function farmSteps(p) { return p.farm_steps || []; }
+  function farmSummary(p) { return p.farm_summary || ''; }
+  function capitalFor(p) { return p.farm_capital; }
+  function holdDaysFor(p) { return p.farm_hold_days; }
 
   function readHash() {
     var hash = window.location.hash.replace(/^#/, '');
@@ -194,14 +153,15 @@
       '<p class="sub">Every protocol at or above the $' + Math.round(DATA.floor_usd / 1e6) + 'M floor with no token on record, excluding centralised exchanges. The snapshot&#8217;s own watchlist field is a subset of this set.</p></div>' +
       '<button type="button" class="rail-btn" id="palette-open">Command palette &#8212; Ctrl+K</button>' +
       '<button type="button" class="rail-btn" id="csv-rail">Export board as CSV</button>' +
-      '<div class="rail-stats"><span>Pre-token rows</span><b>' + DATA.board_size + '</b><span>Live-token set aside</span><b>' + DATA.live_size + '</b></div>' +
+      '<div class="rail-stats"><span>Pre-token rows</span><b>' + DATA.board_size + '</b><span>Live-token ledger</span><b>' + DATA.live_size + '</b><span>Excluded, with reasons</span><b>' + DATA.excluded_size + '</b><span>Protocols accounted for</span><b>' + DATA.accounted_total + ' / 758</b></div>' +
       '</aside>';
   }
   function heroHtml() {
     var top = topRow();
     return '<section class="hero"><div>' +
       '<h1>' + DATA.watchlist_size + ' watchlist protocols, ranked by fitted implied value</h1>' +
-      '<p>The watchlist is the floor: every protocol with at least <b>$' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL</b> and no token on record, excluding centralised exchanges. The early radar adds <b>' + DATA.early_size + ' pre-token protocols</b> below that floor. Implied value is a fitted model, not a promise: TVL times the peers&#8217; market-cap ratio times the fitted odds the protocol ever carries a token.</p>' +
+      '<p>The watchlist is the floor: every protocol with at least <b>$' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL</b> and no token on record, excluding centralised exchanges. The early radar adds <b>' + DATA.early_size + ' pre-token protocols</b> below that floor — every rankable pre-token protocol in the snapshot. Implied value is a fitted model, not a promise: TVL times the peers&#8217; market-cap ratio times the fitted odds the protocol ever carries a token.</p>' +
+      '<p class="checks"><span>&#10003; Coverage ' + DATA.watchlist_size + ' / ' + DATA.watchlist_size + '</span><span>&#10003; ' + DATA.board_size + ' rows, sorted by implied value</span><span>&#10003; Farm plan on every row</span><span>&#10003; ' + DATA.live_size + ' live-token protocols accounted</span><span>&#10003; ' + DATA.excluded_size + ' excluded, reasons stated</span><span>&#10003; Model recomputes every row</span></p>' +
       '</div><div class="kpis">' +
       '<div class="kpi"><span>Top implied value</span><b class="gold">' + fmtUsd(top.implied_value_usd) + '</b></div>' +
       '<div class="kpi"><span>Rank 1</span><b>' + esc(top.name) + '</b></div>' +
@@ -211,8 +171,16 @@
   }
   function stripHtml() {
     var f = DATA.fit;
+    var cal = f.calibration.map(function (b) {
+      return '<tr><td class="num">' + b[0].toFixed(3) + '</td><td class="num">' + b[1].toFixed(3) + '</td></tr>';
+    }).join('');
+    var age = f.age_curve.map(function (a) {
+      return '<tr><td class="num">' + a[0] + 'd</td><td class="num">' + Math.round(a[1] * 100) + '%</td></tr>';
+    }).join('');
     return '<section class="strip"><h2>How this board was fitted — and what was dropped</h2>' +
-      '<p>Implied value = <code>TVL &#215; ' + f.comps_ratio.toFixed(4) + ' &#215; P(token)</code>. The ratio is the median market-cap-to-TVL of the ' + f.comps_live_n + ' live-token protocols that record both figures. P(token) is a logistic fit on all 758 protocols (416 with a token on record, 342 without) over growth, age and category: held-out AUC <code>' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + '</code>, log-loss <code>' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + '</code> against an intercept-only <code>' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '</code>. Age is the signal: long-running protocols are far more likely to carry a token; recent fast growth points the other way.</p>' +
+      '<p>Implied value = <code>TVL &#215; ' + f.comps_ratio.toFixed(4) + ' &#215; P(token)</code>. The ratio is the median market-cap-to-TVL of the ' + f.comps_live_n + ' live-token protocols that record both figures. P(token) is a logistic fit on all 758 protocols (416 with a token on record, 342 without) over growth, age and category: held-out AUC <code>' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + '</code>, log-loss <code>' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + '</code> against an intercept-only <code>' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '</code>. Five-fold cross-validation: mean AUC <code>' + f.five_fold_auc + '</code>, log-loss <code>' + f.five_fold_logloss + '</code> against <code>' + f.five_fold_base_logloss + '</code>. Age is the signal: long-running protocols are far more likely to carry a token; recent fast growth points the other way.</p>' +
+      '<div class="strip-tables"><table class="mini"><caption>Calibration: mean predicted P(token) vs the actual token rate, five bins</caption><thead><tr><th scope="col">Predicted</th><th scope="col">Actual</th></tr></thead><tbody>' + cal + '</tbody></table>' +
+      '<table class="mini"><caption>P(token) by age, growth at the median, no category</caption><thead><tr><th scope="col">Age</th><th scope="col">P(token)</th></tr></thead><tbody>' + age + '</tbody></table></div>' +
       '<p class="dropped">Dropped after losing on both held-out halves: ' + f.dropped.map(esc).join('; ') + '.</p>' +
       '</section>';
   }
@@ -228,7 +196,7 @@
       return '<option value="' + esc(ch) + '"' + (ch === state.chain ? ' selected' : '') + '>' + esc(ch) + ' (' + chainCounts[ch] + ')</option>';
     }).join('');
     return '<div class="controls">' +
-      '<div class="field"><label for="q">Search</label><input type="search" id="q" placeholder="Search name, category or chain" value="' + esc(state.q) + '" aria-label="Search the board"></div>' +
+      '<div class="field"><label for="q">Search</label><input type="search" id="q" placeholder="Search name or category" value="' + esc(state.q) + '" aria-label="Search the board"></div>' +
       '<div class="field"><label for="category">Category</label><select id="category" aria-label="Filter by category">' + opts + '</select></div>' +
       '<div class="field"><label for="chain">Chain</label><select id="chain" aria-label="Filter by chain">' + chainOpts + '</select></div>' +
       '<button type="button" class="button ghost" id="csv-export">Export CSV</button>' +
@@ -292,10 +260,19 @@
         '<td class="num">' + fmtUsd(r.mcap_usd) + '</td>' +
         '<td><span class="status live">already trades</span></td></tr>';
     }).join('');
+    var ex = DATA.excluded.map(function (r) {
+      return '<tr><td><div class="name"><b>' + esc(r.name) + '</b><span class="sub">' + esc(r.category || 'Other') + '</span></div></td>' +
+        '<td class="num">' + fmtUsd(r.tvl_usd) + '</td>' +
+        '<td>' + esc(r.reason) + '</td></tr>';
+    }).join('');
     return '<div class="panel"><div class="table-wrap"><table>' +
-      '<caption>Token live: these protocols already trade, so their market cap is a fact, not a model. They are set aside from the pre-token ranking.</caption>' +
+      '<caption>Token live: all ' + DATA.live.length + ' non-exchange protocols that already trade, so their market cap is a fact, not a model. They are set aside from the pre-token ranking — and they are the comps the value ratio is fitted on.</caption>' +
       '<thead><tr><th scope="col">Status</th><th scope="col">Protocol</th><th scope="col">TVL</th><th scope="col">7d</th><th scope="col">Market cap</th><th scope="col">Token</th></tr></thead>' +
-      '<tbody>' + rows + '</tbody></table></div></div>';
+      '<tbody>' + rows + '</tbody></table></div></div>' +
+      '<div class="panel excluded"><div class="table-wrap"><table>' +
+      '<caption>Excluded from the ranking, with the reason: ' + DATA.excluded.length + ' protocols. Nothing in the snapshot is left unaccounted for — ' + DATA.board_size + ' ranked + ' + DATA.live.length + ' live-token + ' + DATA.excluded.length + ' excluded = ' + DATA.accounted_total + '.</caption>' +
+      '<thead><tr><th scope="col">Protocol</th><th scope="col">TVL</th><th scope="col">Why it is not ranked</th></tr></thead>' +
+      '<tbody>' + ex + '</tbody></table></div></div>';
   }
   function sandboxHtml() {
     var top10 = DATA.rows.slice(0, 10);
@@ -339,8 +316,9 @@
       '<p>Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.</p>' +
       '<div class="formula">implied = round( tvl_usd &#215; ' + f.comps_ratio.toFixed(4) + ' &#215; P(token | growth, age, category) )</div>' +
       '<p>TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age scores as its own term. The early radar is every rankable pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown. This is an estimate, not a price.</p>' +
-      '<h3>The fit, held out twice</h3>' +
-      '<p>Comps ratio ' + f.comps_ratio.toFixed(4) + ' is the median market-cap-to-TVL of ' + f.comps_live_n + ' live-token protocols recording both figures. The logistic P(token) was fitted on all 758 protocols and scored on held-out halves (split by slug hash, even vs odd, fit on one half and score the other, then swap): AUC ' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + ', log-loss ' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + ' against an intercept-only ' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '.</p>' +
+      '<h3>The fit, held out three ways</h3>' +
+      '<p>Comps ratio ' + f.comps_ratio.toFixed(4) + ' is the median market-cap-to-TVL of ' + f.comps_live_n + ' live-token protocols recording both figures. The logistic P(token) was fitted on all 758 protocols and scored on held-out halves (split by slug hash, even vs odd, fit on one half and score the other, then swap): AUC ' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + ', log-loss ' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + ' against an intercept-only ' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '. Five-fold cross-validation agrees: mean AUC ' + f.five_fold_auc + ', log-loss ' + f.five_fold_logloss + ' against ' + f.five_fold_base_logloss + '. Calibration, five bins of mean predicted P(token) against the actual token rate: ' + f.calibration.map(function (b) { return b[0].toFixed(3) + ' &#8594; ' + b[1].toFixed(3); }).join(', ') + '. P(token) by age (growth at the median, no category): ' + f.age_curve.map(function (a) { return a[0] + 'd ' + Math.round(a[1] * 100) + '%'; }).join(', ') + '.</p>' +
+      '<p>Two stronger-looking validations were tested and did not survive, so neither is claimed: a walk-forward split by listing date scores AUC 0.533 with log-loss 1.135 against an intercept-only 0.840 — the target is time-censored, recently listed protocols have not had time to launch, so the calendar does not validate this fit; and conformal intervals on implied value span &#215;0.03–&#215;90 at 90% on held-out data, too wide to price a single row. The held-out splits are the validation.</p>' +
       '<p class="dropped">Dropped after losing on both held-out halves: ' + f.dropped.map(esc).join('; ') + '.</p></section>' + sandboxHtml();
   }
   function guideViewHtml() {
@@ -350,17 +328,17 @@
         var at = s.indexOf(' Cost: ');
         return '<li><b>' + esc(at >= 0 ? s.slice(0, at) : s) + '</b><span class="cost">' + esc(at >= 0 ? s.slice(at + 1) : '') + '</span></li>';
       }).join('');
-      return '<section class="panel guide-plan"><h3>Rank ' + r.rank + ': ' + esc(r.name) + ' — farm it with $' + capitalFor(r) + '</h3><ol class="steps">' + steps + '</ol></section>';
+      return '<section class="panel guide-plan"><h3>Rank ' + r.rank + ': ' + esc(r.name) + ' — farm it with $' + capitalFor(r) + '</h3><p class="farm-sum">' + esc(farmSummary(r)) + '</p><ol class="steps">' + steps + '</ol></section>';
     }).join('');
     return '<section class="panel model"><h2>How to farm a protocol on this board</h2>' +
-      '<p>Every plan on this board is built the same way, from the protocol&#8217;s own record — category, chains, TVL and age — never from a hand-written list of names. The same six steps, the same capital tiers, the same hold windows.</p>' +
-      '<h3>Capital tiers</h3><p>TVL $5B or more farms with $250; $1B or more with $150; $100M or more with $100; anything smaller with $50. The capital is the position itself; gas on top is about $4–$8 to set up and about $2 a week to keep the position active.</p>' +
+      '<p>Every plan on this board is built from the protocol&#8217;s own record — category, chains, TVL, age and fitted odds — never from a hand-written list of names. The plans differ because the protocols differ: a lending farm is not a bridge farm, a 30-day-old protocol does not get the warning a 3-year-old one gets, and the exit trigger is half of that protocol&#8217;s own TVL. The same capital tiers and hold windows run underneath: TVL $5B or more farms with $250; $1B or more with $150; $100M or more with $100; anything smaller with $50.</p>' +
+      '<h3>Capital tiers</h3><p>The capital is the position itself; gas on top is about $4–$8 to set up and about $2 a week to keep the position active. Each plan states what $100 of capital carries in implied token value — TVL &#215; the comps ratio &#215; P(token), divided by TVL — so a row&#8217;s economics are its own, not a template&#8217;s.</p>' +
       '<h3>Hold windows</h3><p>A protocol younger than 180 days needs 60 days of activity; 180–365 days needs 45; older than a year needs 30. Younger protocols get the longer window because a short burst of activity is the easiest thing to fake.</p>' +
       '<h3>Weekly rhythm</h3><p>One real action a week — a deposit, a borrow, a swap, or a vote — so the activity spans more than one snapshot. Keep a farm log: wallet, dates, every transaction hash.</p>' +
       '<h3>Safety rules</h3><p>One fresh wallet per farm, recovery phrase stored offline. Open a rewards page only from the protocol&#8217;s own site, and never pay anyone to claim for you. If a step asks for money to claim, it is a scam.</p></section>' + plans;
   }
   function footHtml() {
-    return '<p class="foot">Token Radar &#183; snapshot ' + esc(DATA.as_of) + ' &#183; model ' + esc(DATA.model_version) + ' &#183; watchlist covered ' + DATA.watchlist_size + ' / ' + DATA.watchlist_size + ', ' + DATA.early_size + ' early rows below the floor &#183; implied values are the entry&#8217;s own claim.</p>';
+    return '<p class="foot">Token Radar &#183; snapshot ' + esc(DATA.as_of) + ' &#183; model ' + esc(DATA.model_version) + ' &#183; watchlist covered ' + DATA.watchlist_size + ' / ' + DATA.watchlist_size + ', ' + DATA.early_size + ' early rows below the floor, ' + DATA.live_size + ' live-token protocols in the ledger, ' + DATA.excluded_size + ' excluded with reasons — ' + DATA.accounted_total + ' of 758 protocols accounted for &#183; implied values are the entry&#8217;s own claim.</p>';
   }
 
   var dialog = document.createElement('dialog');
@@ -398,7 +376,7 @@
         var tail = at >= 0 ? s.slice(at + 1) : '';
         return '<li><b>' + esc(action) + '</b><span class="cost">' + esc(tail) + '</span></li>';
       }).join('');
-      return '<section class="detail-section"><h3>Farm plan</h3><ol class="steps">' + steps + '</ol></section>';
+      return '<section class="detail-section"><h3>Farm plan</h3><p class="farm-sum">' + esc(farmSummary(row)) + '</p><ol class="steps">' + steps + '</ol></section>';
     }
     return '<section class="detail-section"><h3>Implied value</h3><div class="equation">' +
       '<div><span>TVL</span><b>' + fmtUsd(row.tvl_usd) + '</b></div>' +
@@ -445,7 +423,7 @@
       ['Token odds', function (r) { return fmtOdds(r.token_odds); }],
       ['Implied value', function (r) { return fmtUsd(r.implied_value_usd); }],
       ['Farm capital', function (r) { return '$' + capitalFor(r); }],
-      ['Hold window', function (r) { return holdDaysFor(r.age_days) + ' days'; }]
+      ['Hold window', function (r) { return holdDaysFor(r) + ' days'; }]
     ];
     var head = picked.map(function (r) { return '<th scope="col">' + esc(r.name) + ' <span class="sub">#' + r.rank + '</span></th>'; }).join('');
     var body = metrics.map(function (m) {
