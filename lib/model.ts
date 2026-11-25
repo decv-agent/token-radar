@@ -21,11 +21,14 @@
 // odds model. Growth terciles added nothing to the comps ratio either, so growth reaches the value
 // only through the odds.
 //
-// The board covers the snapshot's 40-protocol watchlist, then adds the 260 pre-token protocols below
-// the $50M floor with the most TVL, after the watchlist's own exclusions (no exchange, no versioned
-// pool, no wrapped / staked / bridged product of a token that already trades). Protocols whose token
-// already trades are never ranked: they are shown apart, with their market caps, as the market's own
-// values. No protocol name is ever special-cased: one function scores every row.
+// The board covers the snapshot's own watchlist, then adds the 160 pre-token protocols below the
+// $50M floor with the most TVL. The watchlist is defined from the snapshot's own fields, exactly as
+// the snapshot records them: TVL at or above the $50M floor, no token on record (no gecko_id and no
+// symbol), excluding centralised exchanges (category CEX) — 105 protocols on this snapshot. That is
+// the whole watchlist the board must cover; the snapshot's own 40-slug watchlist field is a subset
+// of it and is covered too. Protocols whose token already trades are never ranked: they are shown
+// apart, with their market caps, as the market's own values. No protocol name is ever special-cased:
+// one function scores every row.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -90,7 +93,7 @@ export const ODDS_SDS = [
 export const MODEL_VERSION = 'radar-fitted-1';
 
 /** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
-export const EARLY_ROWS = 260;
+export const EARLY_ROWS = 160;
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -179,6 +182,8 @@ export interface RadarData {
   model_version: string;
   comps_ratio: number;
   fit: typeof FIT_EVIDENCE;
+  /** The fitted logistic's parameters, so the page's model sandbox recomputes odds with the same fit. */
+  odds: { weights: number[]; means: number[]; sds: number[]; categories: string[] };
   watchlist_size: number;
   board_size: number;
   early_size: number;
@@ -256,6 +261,13 @@ export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
+/** Whether a protocol is on the watchlist the board must cover: at or above the floor, no token on
+ * record (no gecko_id and no symbol), and not a centralised exchange. The snapshot's own fields
+ * decide; nothing about a protocol's name or its token's status anywhere else matters. */
+export function isWatchlist(p: SnapshotProtocol, floorUsd: number): boolean {
+  return p.tvl_usd >= floorUsd && p.gecko_id === null && p.symbol === null && p.category !== 'CEX';
+}
+
 /** Whether a protocol is one the board may rank: pre-token, not an exchange, not a versioned pool,
  * and not a wrapped / staked / bridged product named as one. The early radar follows the house's own
  * rule here: categories stay in, because a below-floor bridge or staking product with no token on
@@ -279,8 +291,11 @@ function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
 export function buildBoard(snapshot: Snapshot): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const chosen = new Map<string, SnapshotProtocol>();
-  // The watchlist is the floor: every slug, even one the snapshot no longer carries (it cannot, but
-  // the board's coverage is the gate's row and is never gambled on a missing record).
+  // The watchlist is the floor: every protocol the snapshot's own fields put on it (TVL at or above
+  // the floor, no token on record, not a centralised exchange). The snapshot's own watchlist field
+  // is a subset of that set and is covered too, even a slug the snapshot no longer carries (it
+  // cannot, but the board's coverage is the gate's row and is never gambled on a missing record).
+  for (const p of snapshot.protocols) if (isWatchlist(p, snapshot.floor_usd)) chosen.set(p.slug, p);
   for (const slug of snapshot.watchlist) {
     const p = index.get(slug);
     if (p !== undefined) chosen.set(slug, p);
@@ -453,7 +468,9 @@ export function radarRow(row: BoardRow): RadarRow {
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
   const board = buildBoard(snapshot);
   const live = liveRows(snapshot);
-  const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
+  const watchlistSlugs = new Set(snapshot.protocols.filter((p) => isWatchlist(p, snapshot.floor_usd)).map((p) => p.slug));
+  for (const s of snapshot.watchlist) watchlistSlugs.add(s);
+  const early = board.filter((r) => !watchlistSlugs.has(r.slug)).length;
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -461,7 +478,8 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     model_version: MODEL_VERSION,
     comps_ratio: COMPS_RATIO,
     fit: FIT_EVIDENCE,
-    watchlist_size: snapshot.watchlist.length,
+    odds: { weights: ODDS_WEIGHTS, means: ODDS_MEANS, sds: ODDS_SDS, categories: [...ODDS_CATEGORIES] },
+    watchlist_size: watchlistSlugs.size,
     board_size: board.length,
     early_size: early,
     live_size: live.length,
@@ -519,6 +537,9 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
   const slugs = new Set(board.map((r) => r.slug));
   const missing = snapshot.watchlist.filter((s) => !slugs.has(s));
   if (missing.length > 0) return `the board misses ${missing.length} watchlist slug${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}`;
+  const computed = snapshot.protocols.filter((p) => isWatchlist(p, snapshot.floor_usd)).map((p) => p.slug);
+  const missingComputed = computed.filter((s) => !slugs.has(s));
+  if (missingComputed.length > 0) return `the board misses ${missingComputed.length} computed-watchlist slug${missingComputed.length === 1 ? '' : 's'}: ${missingComputed.slice(0, 5).join(', ')}`;
   const ranks = board.map((r) => r.rank).sort((a, b) => a - b);
   for (let i = 0; i < ranks.length; i++) if (ranks[i] !== i + 1) return `rank ${i + 1} is ${ranks[i]}`;
   for (let i = 1; i < board.length; i++) if (board[i]!.implied_value_usd > board[i - 1]!.implied_value_usd) return `row ${i + 1} outranks row ${i} on implied value`;

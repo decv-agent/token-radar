@@ -1,7 +1,9 @@
 // Token Radar's entry point (Node 22, standard library only).
 //
 // It reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the fitted model in lib/model.ts, writes the ranked board to
+// pre-token protocol with the fitted model in lib/model.ts — the watchlist is every protocol at or
+// above the $50M floor with no token on record, excluding centralised exchanges (105 on this
+// snapshot) — writes the ranked board to
 // /output/board.json, writes the dashboard's data beside the page as data.js, copies this
 // repository's dashboard/ and screenshots/ to /output, and writes /output/dossier.json with the
 // vendored make.fun library. The run is deterministic: the same snapshot bytes in, the same
@@ -83,6 +85,6 @@ for (const name of shots) {
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside), model ${MODEL_VERSION}\n` +
+  `token radar: ${snapshot.protocols.length} protocols, ${radar.watchlist_size} on the watchlist (snapshot field: ${snapshot.watchlist.length}), ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside), model ${MODEL_VERSION}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
