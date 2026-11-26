@@ -78,8 +78,11 @@
   // chains, TVL, age, odds) — the family decides what the position is and what the week looks like,
   // the figures decide the capital, the hold, the risk note and the exit trigger. The page renders
   // the board's own steps, so the plan on screen and the plan in board.json are the same strings.
+  // The verdict is the plan's costed conclusion — GO, MARGINAL or SKIP from the row's own figures —
+  // and the board carries it as a badge so the call is visible without opening the row.
   function farmSteps(p) { return p.farm_steps || []; }
   function farmSummary(p) { return p.farm_summary || ''; }
+  function verdictOf(p) { return p.farm_verdict || ''; }
   function capitalFor(p) { return p.farm_capital; }
   function holdDaysFor(p) { return p.farm_hold_days; }
 
@@ -161,7 +164,7 @@
     return '<section class="hero"><div>' +
       '<h1>' + DATA.watchlist_size + ' watchlist protocols, ranked by fitted implied value</h1>' +
       '<p>The watchlist is the floor: every protocol with at least <b>$' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL</b> and no token on record, excluding centralised exchanges. The early radar adds <b>' + DATA.early_size + ' pre-token protocols</b> below that floor — every rankable pre-token protocol in the snapshot. Implied value is a fitted model, not a promise: TVL times the peers&#8217; market-cap ratio times the fitted odds the protocol ever carries a token.</p>' +
-      '<p class="checks"><span>&#10003; Coverage ' + DATA.watchlist_size + ' / ' + DATA.watchlist_size + '</span><span>&#10003; ' + DATA.board_size + ' rows, sorted by implied value</span><span>&#10003; Farm plan on every row</span><span>&#10003; ' + DATA.live_size + ' live-token protocols accounted</span><span>&#10003; ' + DATA.excluded_size + ' excluded, reasons stated</span><span>&#10003; Model recomputes every row</span></p>' +
+      '<p class="checks"><span>&#10003; Coverage ' + DATA.watchlist_size + ' / ' + DATA.watchlist_size + '</span><span>&#10003; ' + DATA.board_size + ' rows, sorted by implied value</span><span>&#10003; Farm plan on every row</span><span>&#10003; Costed farm verdict on every row</span><span>&#10003; ' + DATA.live_size + ' live-token protocols accounted</span><span>&#10003; ' + DATA.excluded_size + ' excluded, reasons stated</span><span>&#10003; Model recomputes every row</span></p>' +
       '</div><div class="kpis">' +
       '<div class="kpi"><span>Top implied value</span><b class="gold">' + fmtUsd(top.implied_value_usd) + '</b></div>' +
       '<div class="kpi"><span>Rank 1</span><b>' + esc(top.name) + '</b></div>' +
@@ -178,7 +181,7 @@
       return '<tr><td class="num">' + a[0] + 'd</td><td class="num">' + Math.round(a[1] * 100) + '%</td></tr>';
     }).join('');
     return '<section class="strip"><h2>How this board was fitted — and what was dropped</h2>' +
-      '<p>Implied value = <code>TVL &#215; ' + f.comps_ratio.toFixed(4) + ' &#215; P(token)</code>. The ratio is the median market-cap-to-TVL of the ' + f.comps_live_n + ' live-token protocols that record both figures. P(token) is a logistic fit on all 758 protocols (416 with a token on record, 342 without) over growth, age and category: held-out AUC <code>' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + '</code>, log-loss <code>' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + '</code> against an intercept-only <code>' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '</code>. Five-fold cross-validation: mean AUC <code>' + f.five_fold_auc + '</code>, log-loss <code>' + f.five_fold_logloss + '</code> against <code>' + f.five_fold_base_logloss + '</code>. Age is the signal: long-running protocols are far more likely to carry a token; recent fast growth points the other way.</p>' +
+      '<p>Implied value = <code>TVL &#215; ' + f.comps_ratio.toFixed(4) + ' &#215; P(token)</code>. The ratio is the median market-cap-to-TVL of the ' + f.comps_live_n + ' live-token protocols that record both figures. P(token) is a logistic fit on all 758 protocols (416 with a token on record, 342 without) over growth, age and category: held-out AUC <code>' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + '</code>, log-loss <code>' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + '</code> against an intercept-only <code>' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '</code>. Five-fold cross-validation: mean AUC <code>' + f.five_fold_auc + '</code>, log-loss <code>' + f.five_fold_logloss + '</code> against <code>' + f.five_fold_base_logloss + '</code>.' + (f.loo_auc ? ' Leave-one-out over all 758 protocols: AUC <code>' + f.loo_auc + '</code>, log-loss <code>' + f.loo_logloss + '</code> against <code>' + f.loo_base_logloss + '</code>.' : '') + ' Age is the signal: long-running protocols are far more likely to carry a token; recent fast growth points the other way.</p>' +
       '<div class="strip-tables"><table class="mini"><caption>Calibration: mean predicted P(token) vs the actual token rate, five bins</caption><thead><tr><th scope="col">Predicted</th><th scope="col">Actual</th></tr></thead><tbody>' + cal + '</tbody></table>' +
       '<table class="mini"><caption>P(token) by age, growth at the median, no category</caption><thead><tr><th scope="col">Age</th><th scope="col">P(token)</th></tr></thead><tbody>' + age + '</tbody></table></div>' +
       '<p class="dropped">Dropped after losing on both held-out halves: ' + f.dropped.map(esc).join('; ') + '.</p>' +
@@ -244,11 +247,12 @@
         '<td class="num">' + fmtAge(r.age_days) + '</td>' +
         '<td class="num">' + fmtOdds(r.token_odds) + '</td>' +
         '<td><div class="bar" aria-hidden="true"><i style="width:' + pct + '%"></i></div><span class="num">' + fmtUsd(r.implied_value_usd) + '</span></td>' +
+        '<td><span class="verdict ' + verdictOf(r).toLowerCase() + '">' + esc(verdictOf(r)) + '</span></td>' +
         '</tr>';
     }).join('');
     return '<div class="panel"><div class="table-wrap"><table>' +
       '<caption>Pre-token protocols, strongest implied value first. Select a row for its model and farm plan. Pin rows to keep them above the table; tick up to four to compare.</caption>' +
-      '<thead><tr><th scope="col">Pin</th><th scope="col">Compare</th>' + sortTh('implied', 'Rank') + sortTh('name', 'Protocol') + sortTh('tvl', 'TVL') + sortTh('growth', '7d') + sortTh('age', 'Age') + sortTh('odds', 'Token odds') + sortTh('implied', 'Implied value') + '</tr></thead>' +
+      '<thead><tr><th scope="col">Pin</th><th scope="col">Compare</th>' + sortTh('implied', 'Rank') + sortTh('name', 'Protocol') + sortTh('tvl', 'TVL') + sortTh('growth', '7d') + sortTh('age', 'Age') + sortTh('odds', 'Token odds') + sortTh('implied', 'Implied value') + '<th scope="col">Farm verdict</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div></div>';
   }
   function liveHtml() {
@@ -317,7 +321,7 @@
       '<div class="formula">implied = round( tvl_usd &#215; ' + f.comps_ratio.toFixed(4) + ' &#215; P(token | growth, age, category) )</div>' +
       '<p>TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age scores as its own term. The early radar is every rankable pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown. This is an estimate, not a price.</p>' +
       '<h3>The fit, held out three ways</h3>' +
-      '<p>Comps ratio ' + f.comps_ratio.toFixed(4) + ' is the median market-cap-to-TVL of ' + f.comps_live_n + ' live-token protocols recording both figures. The logistic P(token) was fitted on all 758 protocols and scored on held-out halves (split by slug hash, even vs odd, fit on one half and score the other, then swap): AUC ' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + ', log-loss ' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + ' against an intercept-only ' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '. Five-fold cross-validation agrees: mean AUC ' + f.five_fold_auc + ', log-loss ' + f.five_fold_logloss + ' against ' + f.five_fold_base_logloss + '. Calibration, five bins of mean predicted P(token) against the actual token rate: ' + f.calibration.map(function (b) { return b[0].toFixed(3) + ' &#8594; ' + b[1].toFixed(3); }).join(', ') + '. P(token) by age (growth at the median, no category): ' + f.age_curve.map(function (a) { return a[0] + 'd ' + Math.round(a[1] * 100) + '%'; }).join(', ') + '.</p>' +
+      '<p>Comps ratio ' + f.comps_ratio.toFixed(4) + ' is the median market-cap-to-TVL of ' + f.comps_live_n + ' live-token protocols recording both figures. The logistic P(token) was fitted on all 758 protocols and scored on held-out halves (split by slug hash, even vs odd, fit on one half and score the other, then swap): AUC ' + f.odds_auc[0] + ' / ' + f.odds_auc[1] + ', log-loss ' + f.odds_logloss[0] + ' / ' + f.odds_logloss[1] + ' against an intercept-only ' + f.odds_base_logloss[0] + ' / ' + f.odds_base_logloss[1] + '. Five-fold cross-validation agrees: mean AUC ' + f.five_fold_auc + ', log-loss ' + f.five_fold_logloss + ' against ' + f.five_fold_base_logloss + '.' + (f.loo_auc ? ' Leave-one-out over all 758 protocols agrees: AUC ' + f.loo_auc + ', log-loss ' + f.loo_logloss + ' against ' + f.loo_base_logloss + '.' : '') + ' Calibration, five bins of mean predicted P(token) against the actual token rate: ' + f.calibration.map(function (b) { return b[0].toFixed(3) + ' &#8594; ' + b[1].toFixed(3); }).join(', ') + '. P(token) by age (growth at the median, no category): ' + f.age_curve.map(function (a) { return a[0] + 'd ' + Math.round(a[1] * 100) + '%'; }).join(', ') + '.</p>' +
       '<p>Two stronger-looking validations were tested and did not survive, so neither is claimed: a walk-forward split by listing date scores AUC 0.533 with log-loss 1.135 against an intercept-only 0.840 — the target is time-censored, recently listed protocols have not had time to launch, so the calendar does not validate this fit; and conformal intervals on implied value span &#215;0.03–&#215;90 at 90% on held-out data, too wide to price a single row. The held-out splits are the validation.</p>' +
       '<p class="dropped">Dropped after losing on both held-out halves: ' + f.dropped.map(esc).join('; ') + '.</p></section>' + sandboxHtml();
   }
@@ -423,7 +427,8 @@
       ['Token odds', function (r) { return fmtOdds(r.token_odds); }],
       ['Implied value', function (r) { return fmtUsd(r.implied_value_usd); }],
       ['Farm capital', function (r) { return '$' + capitalFor(r); }],
-      ['Hold window', function (r) { return holdDaysFor(r) + ' days'; }]
+      ['Hold window', function (r) { return holdDaysFor(r) + ' days'; }],
+      ['Farm verdict', function (r) { return verdictOf(r); }]
     ];
     var head = picked.map(function (r) { return '<th scope="col">' + esc(r.name) + ' <span class="sub">#' + r.rank + '</span></th>'; }).join('');
     var body = metrics.map(function (m) {

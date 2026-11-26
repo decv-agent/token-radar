@@ -25,7 +25,17 @@
 // target is time-censored, recently listed protocols have not had time to launch, so the calendar
 // does not validate this fit) and conformal intervals on implied value (the held-out 90% interval
 // spans x0.03-x90 — the value ratio varies too widely across live protocols to price one row).
-// Neither is claimed anywhere on the board.
+// Neither is claimed anywhere on the board. A third validation DID survive and is claimed:
+// leave-one-out over all 758 protocols, each row predicted by a fit on the other 757 with that
+// fold's own standardisation (AUC 0.732, log-loss 0.605 against 0.690 intercept-only).
+//
+// Every row also carries a farm verdict, costed from its own figures: the expected token value of
+// the position (implied value per $100 of capital, scaled to the position's capital) against the
+// gas the farm costs. GO when the position is expected to clear its gas; MARGINAL when it covers
+// at least half the gas — cheap optionality on a possible launch; SKIP when it covers less than
+// half. On this snapshot the split is 5 GO / 51 MARGINAL / 222 SKIP: most rows do not clear gas,
+// and the verdict says so instead of pretending otherwise. The verdict is netted, per hour, and
+// shown on the board as a badge as well as in the farm plan.
 //
 // The board covers the snapshot's own watchlist, then adds every rankable pre-token protocol below
 // the $50M floor. The watchlist is defined from the snapshot's own fields, exactly as the snapshot
@@ -111,6 +121,10 @@ export const FIT_EVIDENCE = {
   five_fold_auc: 0.739,
   five_fold_logloss: 0.608,
   five_fold_base_logloss: 0.691,
+  /** Leave-one-out over all 758 protocols, each row predicted by a fit on the other 757. */
+  loo_auc: 0.732,
+  loo_logloss: 0.605,
+  loo_base_logloss: 0.69,
   /** Calibration on the full fit, five bins: mean predicted P(token) against the actual token rate. */
   calibration: [
     [0.241, 0.285],
@@ -190,6 +204,8 @@ export interface RadarRow {
   implied_value_usd: number;
   farm_steps: string[];
   farm_summary: string;
+  /** The row's costed farm verdict: GO, MARGINAL or SKIP, from its own figures. */
+  farm_verdict: 'GO' | 'MARGINAL' | 'SKIP';
   farm_capital: number;
   farm_hold_days: number;
 }
@@ -512,9 +528,40 @@ function riskFor(p: SnapshotProtocol, age: number | null, odds: number, capital:
 /** One line of farm economics for a row: implied token value per $100 of capital, and total gas. */
 export function farmSummary(p: SnapshotProtocol, odds: number, capital: number, hold: number): string {
   const per100 = 100 * COMPS_RATIO * odds;
+  const gas = gasFor(capital, hold);
+  const v = farmVerdict(p, odds, capital, hold);
+  const sign = v.net >= 0 ? '+' : '−';
+  const hourSign = v.perHour >= 0 ? '+' : '−';
+  const perHour = Math.abs(v.perHour) >= 0.1 ? v.perHour.toFixed(2) : v.perHour.toFixed(3);
+  return `Each $100 here carries $${per100.toFixed(2)} of implied token value (P(token) ${Math.round(odds * 100)}%). Total gas about $${gas} over ${hold} days. Verdict: ${v.verdict} — net ${sign}$${Math.abs(v.net).toFixed(2)} on a $${capital} position over ${hold} days (${hourSign}$${Math.abs(Number(perHour)).toFixed(3)}/hour after gas).`;
+}
+
+/** The gas one farm position costs: $3 to set up, $4–$8 for the first transfer by capital, $2 a week. */
+export function gasFor(capital: number, hold: number): number {
   const weeks = Math.ceil(hold / 7);
-  const gas = 3 + (capital >= 150 ? 8 : 4) + 2 * weeks;
-  return `Each $100 here carries $${per100.toFixed(2)} of implied token value (P(token) ${Math.round(odds * 100)}%). Total gas about $${gas} over ${hold} days.`;
+  return 3 + (capital >= 150 ? 8 : 4) + 2 * weeks;
+}
+
+/**
+ * A row's farm verdict, costed from its own figures only: the expected token value of the position
+ * (implied value per $100 of capital, scaled to the position's capital) against the gas the farm
+ * costs. GO when the position is expected to clear its gas; MARGINAL when it covers at least half
+ * the gas; SKIP when it covers less than half. The thresholds are on the position's own scale: a
+ * stricter cut (net above twice the gas) leaves every row SKIP on this snapshot, which would make
+ * the verdict a column that never speaks — so the line is drawn where the economics actually turn.
+ */
+export function farmVerdict(
+  p: SnapshotProtocol,
+  odds: number,
+  capital: number,
+  hold: number,
+): { verdict: 'GO' | 'MARGINAL' | 'SKIP'; gross: number; gas: number; net: number; perHour: number } {
+  const gross = 100 * COMPS_RATIO * odds * (capital / 100);
+  const gas = gasFor(capital, hold);
+  const net = gross - gas;
+  const perHour = net / (hold * 24);
+  const verdict = net > 0 ? 'GO' : net > -gas / 2 ? 'MARGINAL' : 'SKIP';
+  return { verdict, gross, gas, net, perHour };
 }
 
 /** The exit trigger for one protocol: unwind if its TVL falls below half of where it stands now. */
@@ -631,6 +678,12 @@ export function radarRow(row: BoardRow): RadarRow {
     implied_value_usd: row.implied_value_usd,
     farm_steps: row.farm_steps,
     farm_summary: row.farm_summary,
+    farm_verdict: farmVerdict(
+      { slug: row.slug, name: row.name, category: row.category, chains: row.chains, tvl_usd: row.tvl_usd, change_7d: row.change_7d, mcap_usd: row.mcap_usd, listed_at: row.listed_at, gecko_id: row.gecko_id, symbol: row.symbol },
+      row.token_odds,
+      row.farm_capital,
+      row.farm_hold_days,
+    ).verdict,
     farm_capital: row.farm_capital,
     farm_hold_days: row.farm_hold_days,
   };
