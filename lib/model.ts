@@ -125,6 +125,32 @@ export const FIT_EVIDENCE = {
   loo_auc: 0.732,
   loo_logloss: 0.605,
   loo_base_logloss: 0.69,
+  /**
+   * Walk-forward by listing date (3 expanding folds, refit per fold with that fold's own
+   * standardisation): [AUC, log-loss, intercept-only log-loss] per fold, train on protocols listed
+   * before the cut, test on the next quartile. Pooled AUC 0.609. The model ranks forward in 2 of 3
+   * folds, but its log-loss loses to intercept-only in 2 of 3 — the target is time-censored (the
+   * token rate falls 0.789 -> 0.319 across listing quartiles, recently listed protocols have not
+   * had time to launch), so the calendar does not validate the odds fit. The snapshot records no
+   * token-launch date, so the split is by listing date with snapshot-date features and labels.
+   */
+  walk_forward_folds: [
+    [0.609, 0.833, 0.859],
+    [0.501, 1.033, 0.816],
+    [0.617, 0.904, 0.755],
+  ],
+  walk_forward_auc_pooled: 0.609,
+  /**
+   * Walk-forward of the comps ratio: the median mcap/TVL of live-token protocols listed before the
+   * cut, predicting the next quartile's market caps — [log-RMSE with the earlier-cohort ratio,
+   * log-RMSE with the full-sample ratio] per fold. The ratio walks forward: the earlier-cohort
+   * ratio predicts the next cohort as well as the full-sample ratio does.
+   */
+  walk_forward_ratio_rmse: [
+    [2.253, 2.229],
+    [2.03, 2.06],
+    [2.693, 2.655],
+  ],
   /** Calibration on the full fit, five bins: mean predicted P(token) against the actual token rate. */
   calibration: [
     [0.241, 0.285],
@@ -183,6 +209,8 @@ export interface BoardRow {
   farm_steps: string[];
   /** One line of farm economics for the row: implied value per $100 of capital, and total gas. */
   farm_summary: string;
+  /** The smallest position whose expected token value covers its gas: the farm's minimum viable capital. */
+  min_viable_capital: number;
   farm_capital: number;
   farm_hold_days: number;
 }
@@ -206,6 +234,8 @@ export interface RadarRow {
   farm_summary: string;
   /** The row's costed farm verdict: GO, MARGINAL or SKIP, from its own figures. */
   farm_verdict: 'GO' | 'MARGINAL' | 'SKIP';
+  /** The smallest position whose expected token value covers its gas: the farm's minimum viable capital. */
+  min_viable_capital: number;
   farm_capital: number;
   farm_hold_days: number;
 }
@@ -399,6 +429,7 @@ export function buildBoard(snapshot: Snapshot): BoardRow[] {
       },
       farm_steps: farmSteps(s.p, s.age, s.odds).map(stepText),
       farm_summary: farmSummary(s.p, s.odds, capital, hold),
+      min_viable_capital: minViableCapital(s.p, s.odds, hold),
       farm_capital: capital,
       farm_hold_days: hold,
     };
@@ -525,7 +556,8 @@ function riskFor(p: SnapshotProtocol, age: number | null, odds: number, capital:
   return `The position stays small relative to the protocol's TVL, so one bad week cannot take the farm with it.`;
 }
 
-/** One line of farm economics for a row: implied token value per $100 of capital, and total gas. */
+/** One line of farm economics for a row: implied token value per $100 of capital, total gas, the
+ * costed verdict, and the farm's minimum viable capital — whether the planned position meets it. */
 export function farmSummary(p: SnapshotProtocol, odds: number, capital: number, hold: number): string {
   const per100 = 100 * COMPS_RATIO * odds;
   const gas = gasFor(capital, hold);
@@ -533,13 +565,36 @@ export function farmSummary(p: SnapshotProtocol, odds: number, capital: number, 
   const sign = v.net >= 0 ? '+' : '−';
   const hourSign = v.perHour >= 0 ? '+' : '−';
   const perHour = Math.abs(v.perHour) >= 0.1 ? v.perHour.toFixed(2) : v.perHour.toFixed(3);
-  return `Each $100 here carries $${per100.toFixed(2)} of implied token value (P(token) ${Math.round(odds * 100)}%). Total gas about $${gas} over ${hold} days. Verdict: ${v.verdict} — net ${sign}$${Math.abs(v.net).toFixed(2)} on a $${capital} position over ${hold} days (${hourSign}$${Math.abs(Number(perHour)).toFixed(3)}/hour after gas).`;
+  const mvc = minViableCapital(p, odds, hold);
+  const sizing =
+    capital >= mvc
+      ? ` The planned $${capital} position already clears it.`
+      : ` The planned $${capital} position falls $${mvc - capital} short — size up to $${mvc} to break even.`;
+  return `Each $100 here carries $${per100.toFixed(2)} of implied token value (P(token) ${Math.round(odds * 100)}%). Total gas about $${gas} over ${hold} days. Verdict: ${v.verdict} — net ${sign}$${Math.abs(v.net).toFixed(2)} on a $${capital} position over ${hold} days (${hourSign}$${Math.abs(Number(perHour)).toFixed(3)}/hour after gas). Minimum viable capital $${mvc} — the smallest position whose expected token value covers its $${gas} gas.${sizing}`;
 }
 
 /** The gas one farm position costs: $3 to set up, $4–$8 for the first transfer by capital, $2 a week. */
 export function gasFor(capital: number, hold: number): number {
   const weeks = Math.ceil(hold / 7);
   return 3 + (capital >= 150 ? 8 : 4) + 2 * weeks;
+}
+
+/**
+ * A farm's minimum viable capital: the smallest position whose expected token value covers its gas.
+ * Expected token value per $1 of capital is the comps ratio times the row's own P(token), so the
+ * break-even size is gas divided by that rate — solved on the same two gas branches gasFor uses
+ * ($4 transfer below $150 of capital, $8 at or above), then rounded up to the next $5 so the rounded
+ * size still clears its gas. The planned position is NOT raised to it: at exactly break-even the
+ * expected profit is ~zero, so the plan states the size that would break even and lets the verdict
+ * judge the planned position as sized. On this snapshot the median is $215 (97 rows at or below
+ * $150, 226 at or below $500); only the 5 GO rows already clear it at their planned capital.
+ */
+export function minViableCapital(p: SnapshotProtocol, odds: number, hold: number): number {
+  const rate = COMPS_RATIO * odds;
+  const weeks = Math.ceil(hold / 7);
+  let c = (7 + 2 * weeks) / rate;
+  if (c >= 150) c = (11 + 2 * weeks) / rate;
+  return Math.ceil(c / 5) * 5;
 }
 
 /**
@@ -678,6 +733,7 @@ export function radarRow(row: BoardRow): RadarRow {
     implied_value_usd: row.implied_value_usd,
     farm_steps: row.farm_steps,
     farm_summary: row.farm_summary,
+    min_viable_capital: row.min_viable_capital,
     farm_verdict: farmVerdict(
       { slug: row.slug, name: row.name, category: row.category, chains: row.chains, tvl_usd: row.tvl_usd, change_7d: row.change_7d, mcap_usd: row.mcap_usd, listed_at: row.listed_at, gecko_id: row.gecko_id, symbol: row.symbol },
       row.token_odds,
